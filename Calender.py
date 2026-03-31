@@ -1,257 +1,318 @@
 import streamlit as st
-import yfinance as yf
-import pandas as pd
+import math
 import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
 
-# ----------------- CONFIG -----------------
+st.set_page_config(page_title="Neutral Calendar Pro", layout="centered")
 
-st.set_page_config(page_title="Calendar Go / No-Go", layout="centered")
+# ----------------- STYLE -----------------
 
-# Thresholds (easy to tweak)
-RSI_NO_GO = 35
-ADX_NO_GO = 30
-IVR_NO_GO = 45
+st.markdown("""
+<style>
+div.stButton > button {
+    width: 100%;
+    height: 60px;
+    font-size: 20px;
+    font-weight: bold;
+}
+</style>
+""", unsafe_allow_html=True)
 
-RSI_GO_MIN = 40
-RSI_GO_MAX = 60
-ADX_GO_MAX = 25
-IVR_GO_MIN = 20
-IVR_GO_MAX = 35
+# ----------------- CORE FUNCTIONS -----------------
 
-# ----------------- VWAP (Daily Approximation) -----------------
+def expected_move(price, iv, dte):
+    return price * (iv / 100) * math.sqrt(dte / 365)
 
-def calc_vwap_daily(data):
-    """Stable VWAP using daily OHLCV (works 100% of the time)."""
-    typical_price = (data["High"] + data["Low"] + data["Close"]) / 3
-    vwap = (typical_price * data["Volume"]).sum() / data["Volume"].sum()
-    return float(vwap)
+def classify_trade(price, vwap, rsi, adx, atr_pct, ivr, bbl_low, bbl_high, move):
 
-# ----------------- CORE LOGIC -----------------
+    score = 0
+    reasons = []
 
-def classify_environment(price, bbl_low, bbl_high, rsi, ivr, adx, vwap):
+    if adx > 30:
+        return "NO GO", 0, ["Trending market (ADX too high)"]
+
+    if atr_pct > 3:
+        return "NO GO", 0, ["Volatility too large"]
+
+    if rsi < 35 or rsi > 65:
+        return "NO GO", 0, ["Directional momentum"]
+
+    if ivr > 50:
+        return "NO GO", 0, ["IV too high"]
+
+    if abs(price - vwap) / price < 0.01:
+        score += 1
+        reasons.append("Near VWAP")
+
+    if 40 <= rsi <= 60:
+        score += 1
+        reasons.append("Neutral RSI")
+
+    if adx < 20:
+        score += 1
+        reasons.append("Weak trend")
+
+    if atr_pct < 2:
+        score += 1
+        reasons.append("Low volatility")
+
+    if 20 <= ivr <= 40:
+        score += 1
+        reasons.append("Ideal IVR")
+
+    if bbl_low <= price <= bbl_high:
+        score += 1
+        reasons.append("Inside Bollinger range")
+
+    if move / price < 0.05:
+        score += 1
+        reasons.append("Tight expected move")
+
+    if score >= 6:
+        return "GO", score, reasons
+    elif score >= 4:
+        return "CAUTION", score, reasons
+    else:
+        return "NO GO", score, reasons
+
+# ----------------- STRATEGY RECOMMENDER -----------------
+
+def recommend_strategy(adx, rsi, vwap_drift, ivr):
     """
-    Returns (status, reason)
-    status ∈ {"GO", "CAUTION", "NO GO"}
+    Returns a strategy recommendation based on your laminated neutral rules.
     """
 
-    # VWAP check
-    if price < vwap:
-        return "NO GO", "Price below VWAP."
+    # A+ neutral: single calendar
+    if adx < 20 and 45 <= rsi <= 55 and vwap_drift < 0.005 and 20 <= ivr <= 40:
+        return "Single Calendar — A+ Neutral Setup"
 
-    # Hard NO-GO conditions
-    if price <= bbl_low:
-        return "NO GO", "Price at/under lower Bollinger band."
-    if rsi < RSI_NO_GO:
-        return "NO GO", f"RSI oversold (< {RSI_NO_GO})."
-    if adx > ADX_NO_GO:
-        return "NO GO", f"Strong trend (ADX > {ADX_NO_GO})."
-    if ivr > IVR_NO_GO:
-        return "NO GO", f"IVR too high (> {IVR_NO_GO})."
+    # Extra safe neutral: double calendar
+    if adx < 20 and 40 <= rsi <= 60 and vwap_drift < 0.0075 and 20 <= ivr <= 45:
+        return "Double Calendar — Extra Safe, Wide Neutral Tent"
 
-    # Ideal GO conditions
-    bbl_mid = (bbl_low + bbl_high) / 2
-    if (
-        RSI_GO_MIN <= rsi <= RSI_GO_MAX and
-        adx < ADX_GO_MAX and
-        IVR_GO_MIN <= ivr <= IVR_GO_MAX and
-        bbl_mid <= price <= bbl_high and
-        price >= vwap
-    ):
-        return "GO", "Neutral, stable environment for calendars."
+    # Neutral but drifting: wide iron condor
+    if 20 <= adx <= 25 and 50 <= rsi <= 60 and 0.005 <= vwap_drift <= 0.01 and ivr >= 30:
+        return "Wide Iron Condor — Neutral but Drifting"
 
-    # Everything else
-    return "CAUTION", "Mixed signals. Monitor, don’t force entries."
+    # High IV, low trend: jade lizard
+    if adx < 20 and ivr > 40 and rsi < 60:
+        return "Jade Lizard — High IV, Low Trend, No Upside Risk"
 
-# ----------------- SIMPLE TECH CALCS -----------------
+    # Defined-risk theta: wide credit spread
+    if adx < 25 and ivr >= 30 and 40 <= rsi <= 60:
+        return "Wide Credit Spread — Defined-Risk Theta Play"
 
-def calc_bollinger(close, length=20, mult=2):
-    ma = close.rolling(length).mean()
-    std = close.rolling(length).std()
-    upper = ma + mult * std
-    lower = ma - mult * std
-    return lower, upper
+    # No clear edge
+    return "No Clear Edge — Stay Flat or Use Small Calendar Size"
 
-def calc_rsi(close, length=14):
-    delta = close.diff()
-    gain = np.where(delta > 0, delta, 0.0)
-    loss = np.where(delta < 0, -delta, 0.0)
-    gain_rol = pd.Series(gain).rolling(length).mean()
-    loss_rol = pd.Series(loss).rolling(length).mean()
-    rs = gain_rol / (loss_rol + 1e-9)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+# ----------------- REAL P&L ENGINE -----------------
 
-def calc_adx(high, low, close, length=14):
-    plus_dm = high.diff()
-    minus_dm = low.diff() * -1
+def real_calendar_pnl(price, strike, move, front_iv, back_iv, debit):
 
-    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
-    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
+    prices = np.linspace(price - move*2, price + move*2, 100)
 
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    pnl = []
 
-    atr = tr.rolling(length).mean()
+    for p in prices:
 
-    plus_di = 100 * (pd.Series(plus_dm).rolling(length).sum() / (atr + 1e-9))
-    minus_di = 100 * (pd.Series(minus_dm).rolling(length).sum() / (atr + 1e-9))
+        distance = abs(p - strike)
 
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)) * 100
-    adx = dx.rolling(length).mean()
-    return adx
+        front_decay = front_iv * (1 - (distance / move))
+        back_value = back_iv * (1 - (distance / (move * 1.5)))
 
-# Dummy IVR placeholder
-def dummy_ivr():
-    return 30.0
+        front_decay = max(front_decay, 0)
+        back_value = max(back_value, 0)
+
+        value = back_value - front_decay
+
+        pnl_value = (value * 10) - debit
+
+        pnl.append(pnl_value)
+
+    pnl = np.array(pnl)
+
+    fig, ax = plt.subplots()
+
+    ax.plot(prices, pnl)
+    ax.axvline(strike, linestyle="--")
+    ax.axhline(0)
+
+    ax.set_title("Real Calendar P&L")
+    ax.set_xlabel("Price")
+    ax.set_ylabel("Profit / Loss ($)")
+
+    return fig
+
+# ----------------- OPTIMIZER -----------------
+
+def optimize_calendar(price, strikes, front_expiries, back_expiries, front_iv, back_iv):
+
+    best_score = -999
+    best = None
+
+    for strike in strikes:
+        for f in front_expiries:
+            for b in back_expiries:
+
+                score = 0
+
+                # Strike proximity
+                score += max(0, 1 - abs(price - strike) / price)
+
+                # IV structure
+                if back_iv > front_iv:
+                    score += 2
+                else:
+                    score -= 2
+
+                # IV spread magnitude
+                score += min((back_iv - front_iv) / 10, 2)
+
+                # Preferred DTE ranges
+                if 7 <= f <= 14:
+                    score += 1
+
+                if 30 <= b <= 60:
+                    score += 1
+
+                if score > best_score:
+                    best_score = score
+                    best = {
+                        "strike": strike,
+                        "front_dte": f,
+                        "back_dte": b,
+                        "score": score
+                    }
+
+    return best
 
 # ----------------- UI -----------------
 
-st.title("📊 Calendar Spread Go / No-Go")
+st.title("📊 Neutral Calendar Pro V13")
 
-# -------- Manual Input Section --------
+ticker = st.text_input("Ticker", value="SPY").upper()
 
-st.header("Manual Check")
+st.header("Market Inputs")
 
 col1, col2 = st.columns(2)
+
 with col1:
-    price = st.number_input("Price", value=454.59)
-    bbl_low = st.number_input("BBL Low", value=452.41)
-    bbl_high = st.number_input("BBL High", value=460.80)
-    vwap_manual = st.number_input("VWAP", value=455.00)
+    price = st.number_input("Price", value=450.0)
+    vwap = st.number_input("VWAP", value=450.0)
+    bbl_low = st.number_input("BB Low", value=445.0)
+    bbl_high = st.number_input("BB High", value=455.0)
+
 with col2:
-    rsi = st.number_input("RSI", value=28.87)
-    ivr = st.number_input("IVR", value=41.0)
-    adx = st.number_input("ADX", value=47.28)
+    rsi = st.number_input("RSI", value=50.0)
+    adx = st.number_input("ADX", value=18.0)
+    atr = st.number_input("ATR", value=5.0)
+    ivr = st.number_input("IV Rank", value=30.0)
+    iv = st.number_input("IV (%)", value=25.0)
+    dte = st.number_input("DTE", value=30)
 
-if st.button("Evaluate Manual Inputs"):
-    status, reason = classify_environment(price, bbl_low, bbl_high, rsi, ivr, adx, vwap_manual)
-    if status == "GO":
-        st.success(f"GO ✅ — {reason}")
-    elif status == "CAUTION":
-        st.warning(f"CAUTION ⚠️ — {reason}")
+st.header("Options Inputs")
+
+front_iv = st.number_input("Front IV (%)", value=20.0)
+back_iv = st.number_input("Back IV (%)", value=25.0)
+debit = st.number_input("Debit Paid ($)", value=2.50)
+
+front_dte = st.number_input("Front Expiry (DTE)", value=10)
+back_dte = st.number_input("Back Expiry (DTE)", value=45)
+
+# ----------------- RUN -----------------
+
+if st.button("🚀 Evaluate Trade"):
+
+    atr_pct = (atr / price) * 100
+    move = expected_move(price, iv, dte)
+    vwap_drift = abs(price - vwap) / price
+
+    decision, score, reasons = classify_trade(
+        price, vwap, rsi, adx, atr_pct, ivr, bbl_low, bbl_high, move
+    )
+
+    strike = round(price)
+
+    st.markdown("---")
+    st.subheader(f"📈 {ticker} Analysis")
+
+    if decision == "GO":
+        st.success(f"GO ✅ (Score {score}/7)")
+    elif decision == "CAUTION":
+        st.warning(f"CAUTION ⚠️ (Score {score}/7)")
     else:
-        st.error(f"NO GO ⛔ — {reason}")
+        st.error(f"NO GO ⛔ (Score {score}/7)")
+
+    st.subheader("🧠 Reasoning")
+    for r in reasons:
+        st.write(f"- {r}")
+
+    st.subheader("📊 Key Metrics")
+    st.write(f"- VWAP Drift: {vwap_drift*100:.2f}%")
+    st.write(f"- ATR %: {atr_pct:.2f}%")
+
+    # ----------------- STRATEGY RECOMMENDATION -----------------
+
+    st.subheader("🎯 Strategy Recommendation")
+    strategy = recommend_strategy(adx, rsi, vwap_drift, ivr)
+    st.write(strategy)
+
+    st.subheader("📈 Expected Move")
+    st.write(f"± {move:.2f}")
+
+    # Profit zones
+    max_profit_low = strike - (move * 0.25)
+    max_profit_high = strike + (move * 0.25)
+
+    st.subheader("💰 Profit Zone")
+    st.write(f"🟢 Max Profit: {max_profit_low:.2f} → {max_profit_high:.2f}")
+    st.write(f"🟡 Expected Range: {price - move:.2f} → {price + move:.2f}")
+
+    # ----------------- OPTIMIZER -----------------
+
+    st.subheader("🎯 Auto Strike & Expiry Optimizer")
+
+    strikes = [round(price - 5), round(price), round(price + 5)]
+    front_expiries = list(range(front_dte - 2, front_dte + 3))
+    back_expiries = list(range(back_dte - 5, back_dte + 6))
+
+    best = optimize_calendar(price, strikes, front_expiries, back_expiries, front_iv, back_iv)
+
+    if best:
+        st.write(f"Strike: {best['strike']}")
+        st.write(f"Front DTE: {best['front_dte']}")
+        st.write(f"Back DTE: {best['back_dte']}")
+        st.write(f"Score: {best['score']}")
+
+    # ----------------- REAL P&L -----------------
+
+    st.subheader("📈 Real P&L Visualization")
+
+    fig = real_calendar_pnl(price, strike, move, front_iv, back_iv, debit)
+    st.pyplot(fig)
+
+    # ----------------- JOURNAL -----------------
+
+    if "journal" not in st.session_state:
+        st.session_state.journal = []
+
+    st.session_state.journal.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "ticker": ticker,
+        "decision": decision,
+        "score": score,
+        "strike": strike,
+        "strategy": strategy
+    })
+
+# ----------------- JOURNAL -----------------
 
 st.markdown("---")
+st.subheader("📓 Trade Journal")
 
-# -------- Ticker-Based Auto Metrics --------
-
-st.header("Ticker Auto-Check (basic)")
-
-ticker = st.text_input("Ticker", value="DIA").upper()
-period = st.selectbox("History period", ["1mo", "3mo", "6mo"], index=0)
-
-if st.button("Fetch & Evaluate Ticker"):
-    data = yf.Ticker(ticker).history(period=period)
-    if data.empty:
-        st.error("No data returned for this ticker/period.")
-    else:
-        close = data["Close"]
-        high = data["High"]
-        low = data["Low"]
-
-        last_price = float(close.iloc[-1])
-
-        bbl_low_series, bbl_high_series = calc_bollinger(close)
-        last_bbl_low = float(bbl_low_series.iloc[-1])
-        last_bbl_high = float(bbl_high_series.iloc[-1])
-
-        rsi_series = calc_rsi(close)
-        last_rsi = float(rsi_series.iloc[-1])
-
-        adx_series = calc_adx(high, low, close)
-        last_adx = float(adx_series.iloc[-1])
-
-        last_ivr = dummy_ivr()
-
-        last_vwap = calc_vwap_daily(data)
-
-        st.write(f"**{ticker} latest metrics:**")
-        st.write(f"- Price: {last_price:.2f}")
-        st.write(f"- VWAP: {last_vwap:.2f}")
-        st.write(f"- BBL Low: {last_bbl_low:.2f}")
-        st.write(f"- BBL High: {last_bbl_high:.2f}")
-        st.write(f"- RSI: {last_rsi:.2f}")
-        st.write(f"- ADX: {last_adx:.2f}")
-        st.write(f"- IVR (dummy): {last_ivr:.2f}")
-
-        status, reason = classify_environment(
-            last_price,
-            last_bbl_low,
-            last_bbl_high,
-            last_rsi,
-            last_ivr,
-            last_adx,
-            last_vwap
-        )
-
-        if status == "GO":
-            st.success(f"GO ✅ — {reason}")
-        elif status == "CAUTION":
-            st.warning(f"CAUTION ⚠️ — {reason}")
-        else:
-            st.error(f"NO GO ⛔ — {reason}")
-
-st.markdown("---")
-
-# -------- Simple Scanner --------
-
-st.header("Scanner (basic, using dummy IVR)")
-
-tickers_input = st.text_input(
-    "Tickers (comma-separated)",
-    value="SPY, QQQ, DIA, IWM"
-)
-
-if st.button("Run Scan"):
-    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
-    rows = []
-
-    for t in tickers:
-        data = yf.Ticker(t).history(period="3mo")
-        if data.empty:
-            continue
-
-        close = data["Close"]
-        high = data["High"]
-        low = data["Low"]
-
-        last_price = float(close.iloc[-1])
-        bbl_low_series, bbl_high_series = calc_bollinger(close)
-        last_bbl_low = float(bbl_low_series.iloc[-1])
-        last_bbl_high = float(bbl_high_series.iloc[-1])
-        rsi_series = calc_rsi(close)
-        last_rsi = float(rsi_series.iloc[-1])
-        adx_series = calc_adx(high, low, close)
-        last_adx = float(adx_series.iloc[-1])
-        last_ivr = dummy_ivr()
-        last_vwap = calc_vwap_daily(data)
-
-        status, reason = classify_environment(
-            last_price,
-            last_bbl_low,
-            last_bbl_high,
-            last_rsi,
-            last_ivr,
-            last_adx,
-            last_vwap
-        )
-
-        rows.append({
-            "Ticker": t,
-            "Price": round(last_price, 2),
-            "VWAP": round(last_vwap, 2),
-            "RSI": round(last_rsi, 2),
-            "ADX": round(last_adx, 2),
-            "IVR(dummy)": round(last_ivr, 2),
-            "Status": status,
-            "Reason": reason,
-        })
-
-    if rows:
-        df = pd.DataFrame(rows)
-        st.dataframe(df)
-    else:
-        st.info("No data returned for any tickers.")
+if "journal" in st.session_state:
+    for j in reversed(st.session_state.journal):
+        st.write(j)
+else:
+    st.write("No trades yet.")
