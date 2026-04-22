@@ -1,6 +1,6 @@
 """
-Strategy.py - Entry Signals & Trade Management
-PRODUCTION VERSION - Real scoring, working trade journal
+Strategy.py - Entry Signal Analysis Only
+SIMPLE VERSION - Just confirms entry signals
 Run with: streamlit run Strategy.py
 """
 
@@ -9,16 +9,15 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 from enum import Enum
-import json
 
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
 
 st.set_page_config(
-    page_title="Entry Strategy Manager",
+    page_title="Entry Signal Analyzer",
     page_icon="📈",
     layout="wide"
 )
@@ -147,7 +146,7 @@ def detect_trend_regime(df: pd.DataFrame) -> TrendRegime:
         return TrendRegime.CHOPPY
 
 # ============================================================================
-# ENTRY SIGNAL GENERATOR - REAL SCORING RESTORED
+# ENTRY SIGNAL GENERATOR
 # ============================================================================
 
 class EntrySignalGenerator:
@@ -215,7 +214,6 @@ class EntrySignalGenerator:
         dist_from_support = (current_price - recent_low) / current_price * 100
         dist_from_resistance = (recent_high - current_price) / current_price * 100
         
-        # REAL SCORING - NOT FORCED
         score = 50
         reasons = []
         warnings = []
@@ -317,7 +315,6 @@ class EntrySignalGenerator:
         
         score = max(0, min(100, score))
         
-        # REAL SIGNAL - NOT FORCED
         if score >= 75:
             signal_enum = EntrySignal.STRONG_BUY
         elif score >= 60:
@@ -370,11 +367,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# INITIALIZE SESSION STATE
+# SESSION STATE
 # ============================================================================
-
-if 'trades' not in st.session_state:
-    st.session_state.trades = []
 
 if 'analysis_result' not in st.session_state:
     st.session_state.analysis_result = None
@@ -401,229 +395,123 @@ with st.sidebar:
     """)
     
     st.divider()
-    
-    active_count = len([t for t in st.session_state.trades if t.get('status') == 'Active'])
-    st.metric("Active Trades", active_count)
-    st.metric("Total Trades", len(st.session_state.trades))
+    analyze_button = st.button("🔍 Analyze Entry", type="primary", use_container_width=True)
     
     st.divider()
-    analyze_button = st.button("🔍 Analyze Entry", type="primary", use_container_width=True)
+    st.caption("After analysis, use **Exit Planner** to calculate stops and position size.")
 
 # ============================================================================
 # MAIN CONTENT
 # ============================================================================
 
-st.markdown('<h1 class="strategy-header">📈 Entry Strategy Manager</h1>', unsafe_allow_html=True)
-st.caption("Confirm entry signals and manage active trades")
+st.markdown('<h1 class="strategy-header">📈 Entry Signal Analyzer</h1>', unsafe_allow_html=True)
+st.caption("Confirm entry signals before committing capital")
 
-# Helpful debug expander (can be hidden)
-with st.expander("🔍 Debug Info", expanded=False):
-    st.write(f"Trades in session: {len(st.session_state.trades)}")
-    for i, t in enumerate(st.session_state.trades):
-        st.write(f"{i}: {t.get('ticker')} - {t.get('direction')} - Status: '{t.get('status')}'")
+if analyze_button:
+    with st.spinner(f"Analyzing {ticker}..."):
+        generator = EntrySignalGenerator(ticker)
+        result = generator.analyze(entry_price, direction)
+        st.session_state.analysis_result = result
 
-tab1, tab2, tab3 = st.tabs(["🔍 Entry Analysis", "📊 Active Trades", "📈 Performance"])
-
-# ============================================================================
-# TAB 1: ENTRY ANALYSIS
-# ============================================================================
-
-with tab1:
-    if analyze_button:
-        with st.spinner(f"Analyzing {ticker}..."):
-            generator = EntrySignalGenerator(ticker)
-            result = generator.analyze(entry_price, direction)
-            st.session_state.analysis_result = result
+if st.session_state.analysis_result:
+    result = st.session_state.analysis_result
     
-    if st.session_state.analysis_result:
-        result = st.session_state.analysis_result
+    signal = result.get('signal', EntrySignal.AVOID)
+    signal_class_map = {
+        EntrySignal.STRONG_BUY: "signal-strong",
+        EntrySignal.BUY: "signal-buy",
+        EntrySignal.NEUTRAL: "signal-neutral",
+        EntrySignal.WAIT: "signal-wait",
+        EntrySignal.AVOID: "signal-avoid"
+    }
+    signal_class = signal_class_map.get(signal, "signal-neutral")
+    signal_name = signal.value if hasattr(signal, 'value') else str(signal)
+    score_value = result.get('score', 0)
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.markdown(f"""
+        <div style="text-align: center; padding: 20px; background: #1e2a3a; border-radius: 20px;">
+            <div style="font-size: 1.2rem; color: #94a3b8;">ENTRY SIGNAL</div>
+            <div style="margin: 20px 0;"><span class="{signal_class}" style="font-size: 2rem;">{signal_name}</span></div>
+            <div style="font-size: 4rem; font-weight: 800; color: white;">{score_value}</div>
+            <div style="color: #94a3b8;">Score / 100</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        signal = result.get('signal', EntrySignal.AVOID)
-        signal_class_map = {
-            EntrySignal.STRONG_BUY: "signal-strong",
-            EntrySignal.BUY: "signal-buy",
-            EntrySignal.NEUTRAL: "signal-neutral",
-            EntrySignal.WAIT: "signal-wait",
-            EntrySignal.AVOID: "signal-avoid"
-        }
-        signal_class = signal_class_map.get(signal, "signal-neutral")
-        signal_name = signal.value if hasattr(signal, 'value') else str(signal)
-        score_value = result.get('score', 0)
+        st.markdown("---")
+        st.metric("Market Regime", result.get('regime', 'Unknown'))
+        st.metric("Current Price", f"${result.get('current_price', 0):.2f}")
         
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.markdown(f"""
-            <div style="text-align: center; padding: 20px;">
-                <div style="font-size: 1.2rem; color: #94a3b8;">ENTRY SIGNAL</div>
-                <div style="margin: 20px 0;"><span class="{signal_class}" style="font-size: 2rem;">{signal_name}</span></div>
-                <div style="font-size: 3rem; font-weight: 800;">{score_value}</div>
-                <div style="color: #94a3b8;">Score / 100</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.metric("Market Regime", result.get('regime', 'Unknown'))
-            st.metric("Current Price", f"${result.get('current_price', 0):.2f}")
-            
-            # Add to trade journal button
-            if signal in [EntrySignal.STRONG_BUY, EntrySignal.BUY]:
-                if st.button("📝 ADD TO TRADE JOURNAL", use_container_width=True, type="primary"):
-                    new_trade = {
-                        "ticker": ticker,
-                        "direction": direction,
-                        "entry_price": entry_price,
-                        "entry_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "entry_score": score_value,
-                        "status": "Active",
-                        "stop_loss": entry_price * 0.98 if direction == "LONG" else entry_price * 1.02,
-                        "take_profit": entry_price * 1.04 if direction == "LONG" else entry_price * 0.96,
-                        "position_size": 100,
-                        "pnl": 0.0,
-                        "notes": ""
-                    }
-                    st.session_state.trades.append(new_trade)
-                    st.success(f"✅ {ticker} added! Total trades: {len(st.session_state.trades)}")
-                    st.rerun()
-        
-        with col2:
-            st.markdown("### 📊 Key Levels")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Support", f"${result.get('support', 0):.2f}")
-            c2.metric("Resistance", f"${result.get('resistance', 0):.2f}")
-            c3.metric("20 SMA", f"${result.get('sma_20', 0):.2f}")
-            c4.metric("50 SMA", f"${result.get('sma_50', 0):.2f}")
-            
-            st.markdown("### 📈 Indicators")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("RSI (14)", f"{result.get('rsi', 0):.1f}")
-            c2.metric("Volume Ratio", f"{result.get('volume_ratio', 0):.2f}x")
-            dist = result.get('dist_support', 0) if direction == "LONG" else result.get('dist_resistance', 0)
-            c3.metric("Dist to Key Level", f"{dist:.1f}%")
-            c4.metric("MACD Hist", f"{result.get('macd_histogram', 0):.3f}")
-            
-            if result.get('reasons'):
-                st.markdown("### ✅ Confirming Factors")
-                for r in result['reasons']:
-                    st.markdown(f"- {r}")
-            
-            if result.get('warnings'):
-                st.markdown("### ⚠️ Warning Signs")
-                for w in result['warnings']:
-                    st.markdown(f"- {w}")
-    else:
-        st.info("👈 Enter a ticker and click 'Analyze Entry' to begin")
-
-# ============================================================================
-# TAB 2: ACTIVE TRADES
-# ============================================================================
-# ============================================================================
-# TAB 2: ACTIVE TRADES - ULTRA SIMPLE DEBUG
-# ============================================================================
-
-with tab2:
-    st.subheader("📊 Active Trades")
+        # Recommendation
+        st.markdown("---")
+        st.markdown("### 🎯 Recommendation")
+        if signal == EntrySignal.STRONG_BUY:
+            st.success("**Strong Buy** - Full position size, 2x ATR stop")
+        elif signal == EntrySignal.BUY:
+            st.info("**Buy** - Standard position size, 1.5x ATR stop")
+        elif signal == EntrySignal.NEUTRAL:
+            st.warning("**Neutral** - Reduce size 50%, tighten stop")
+        elif signal == EntrySignal.WAIT:
+            st.error("**Wait** - Paper trade only, wait for better entry")
+        else:
+            st.error("**Avoid** - Do not trade this setup")
     
-    # SHOW EVERYTHING in session state
-    st.write("### 🔍 Raw Session State Data:")
-    st.write(f"Total trades in session: **{len(st.session_state.trades)}**")
-    
-    if len(st.session_state.trades) > 0:
-        for i, t in enumerate(st.session_state.trades):
-            st.write(f"--- Trade {i} ---")
-            st.write(f"Ticker: {t.get('ticker')}")
-            st.write(f"Status: **'{t.get('status')}'** (type: {type(t.get('status'))})")
-            st.write(f"Full trade: {t}")
-    
-    # Try different filter methods
-    st.write("### 📋 Filtering Attempts:")
-    
-    # Method 1: Exact match
-    method1 = [t for t in st.session_state.trades if t.get('status') == 'Active']
-    st.write(f"Method 1 (== 'Active'): **{len(method1)}** trades")
-    
-    # Method 2: String contains
-    method2 = [t for t in st.session_state.trades if 'Active' in str(t.get('status', ''))]
-    st.write(f"Method 2 ('Active' in string): **{len(method2)}** trades")
-    
-    # Method 3: Lowercase
-    method3 = [t for t in st.session_state.trades if str(t.get('status', '')).lower() == 'active']
-    st.write(f"Method 3 (lowercase match): **{len(method3)}** trades")
-    
-    # Method 4: No filter - show all
-    st.write(f"Method 4 (no filter): **{len(st.session_state.trades)}** trades")
-    
-    st.divider()
-    
-    # Use the method that worked
-    active_trades = method2  # This usually works best
-    
-    if active_trades:
-        st.success(f"✅ Found {len(active_trades)} active trades!")
-        
-        for trade in active_trades:
-            st.write(f"📈 **{trade.get('ticker')}** - {trade.get('direction')} @ ${trade.get('entry_price', 0):.2f}")
-            st.write(f"   Status: {trade.get('status')}")
-            st.write(f"   Entry Date: {trade.get('entry_date')}")
-            st.divider()
-    else:
-        st.warning("No active trades found with any filter method.")
-        st.info("Try adding a trade from the Entry Analysis tab.")
-
-# ============================================================================
-# TAB 3: PERFORMANCE
-# ============================================================================
-
-with tab3:
-    st.subheader("📈 Performance")
-    
-    closed_trades = [t for t in st.session_state.trades if 'Closed' in str(t.get('status', ''))]
-    
-    if closed_trades:
-        total_trades = len(closed_trades)
-        wins = len([t for t in closed_trades if 'Win' in str(t.get('status', ''))])
-        losses = len([t for t in closed_trades if 'Loss' in str(t.get('status', ''))])
-        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-        
-        total_pnl = sum([t.get('pnl', 0) for t in closed_trades])
-        avg_win = sum([t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) > 0]) / wins if wins > 0 else 0
-        avg_loss = abs(sum([t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) < 0]) / losses) if losses > 0 else 0
-        profit_factor = avg_win / avg_loss if avg_loss > 0 else 0
-        
+    with col2:
+        st.markdown("### 📊 Key Levels")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Trades", total_trades)
-        c2.metric("Win Rate", f"{win_rate:.1f}%")
-        c3.metric("Total P&L", f"${total_pnl:.2f}")
-        c4.metric("Profit Factor", f"{profit_factor:.2f}")
+        c1.metric("Support", f"${result.get('support', 0):.2f}")
+        c2.metric("Resistance", f"${result.get('resistance', 0):.2f}")
+        c3.metric("20 SMA", f"${result.get('sma_20', 0):.2f}")
+        c4.metric("50 SMA", f"${result.get('sma_50', 0):.2f}")
         
+        st.markdown("### 📈 Technical Indicators")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Wins", wins)
-        c2.metric("Losses", losses)
-        c3.metric("Avg Win", f"${avg_win:.2f}")
-        c4.metric("Avg Loss", f"${avg_loss:.2f}")
+        c1.metric("RSI (14)", f"{result.get('rsi', 0):.1f}")
+        c2.metric("Volume Ratio", f"{result.get('volume_ratio', 0):.2f}x")
+        dist = result.get('dist_support', 0) if direction == "LONG" else result.get('dist_resistance', 0)
+        c3.metric("Dist to Key Level", f"{dist:.1f}%")
+        c4.metric("MACD Hist", f"{result.get('macd_histogram', 0):.3f}")
         
-        st.divider()
-        st.subheader("📋 Closed Trades")
-        df_closed = pd.DataFrame(closed_trades)
-        display_cols = ['ticker', 'direction', 'entry_price', 'entry_date', 'status', 'pnl']
-        available = [c for c in display_cols if c in df_closed.columns]
-        st.dataframe(df_closed[available], use_container_width=True, hide_index=True)
+        if result.get('reasons'):
+            st.markdown("### ✅ Confirming Factors")
+            for r in result['reasons']:
+                st.markdown(f"- {r}")
+        
+        if result.get('warnings'):
+            st.markdown("### ⚠️ Warning Signs")
+            for w in result['warnings']:
+                st.markdown(f"- {w}")
+        
+        st.markdown("---")
+        st.markdown("### 🚀 Next Step")
+        st.markdown(f"""
+        1. Copy **{ticker}** and entry price **${entry_price:.2f}**
+        2. Open **Exit Strategy Command Center**
+        3. Use support **${result.get('support', 0):.2f}** as stop reference
+        """)
+
+else:
+    st.info("👈 Enter a ticker and click 'Analyze Entry' to generate entry signals")
     
-    if len(st.session_state.trades) > 0:
-        st.divider()
-        if st.button("📥 Export Trade Journal"):
-            st.download_button(
-                "Download JSON",
-                json.dumps(st.session_state.trades, indent=2, default=str),
-                file_name=f"trades_{datetime.now().strftime('%Y%m%d')}.json",
-                mime="application/json"
-            )
-        
-        if st.button("🗑️ Clear All Trades"):
-            st.session_state.trades = []
-            st.rerun()
-    else:
-        st.info("No trades yet. Add trades from the Entry Analysis tab.")
+    st.markdown("""
+    ### 📋 How This Works
+    
+    1. **Enter ticker** from your scanner results
+    2. **Set entry price** (current price or your limit)
+    3. **Click Analyze** to score the setup
+    
+    The analyzer checks:
+    - Trend alignment (moving averages)
+    - Momentum (MACD, RSI)
+    - Volume confirmation
+    - Distance to support/resistance
+    - Market regime (trending vs choppy)
+    
+    **Score 60+ is a valid entry.** Then use the Exit Planner for stops and position size.
+    """)
 
 # Footer
 st.divider()
-st.caption("📈 Entry Strategy Manager — Confirm signals. Manage risk. Track performance.")
+st.caption("📈 Entry Signal Analyzer — Confirm before you commit")
