@@ -1,5 +1,6 @@
 """
 Strategy.py - Entry Signals & Trade Management
+FIXED: KeyError on regime/regime
 Run with: streamlit run Strategy.py
 """
 
@@ -77,11 +78,18 @@ def get_column(df, col_name):
     return None
 
 # ============================================================================
-# TECHNICAL INDICATORS FOR ENTRY
+# TECHNICAL INDICATORS
 # ============================================================================
 
 def calculate_ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
+
+def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def calculate_macd(series: pd.Series) -> Tuple[pd.Series, pd.Series, pd.Series]:
     ema_12 = calculate_ema(series, 12)
@@ -141,7 +149,6 @@ def detect_trend_regime(df: pd.DataFrame) -> TrendRegime:
     adx = calculate_adx(high, low, close, 14)
     current_adx = robust_scalar(adx.iloc[-1])
     
-    # ATR ratio (current vs average)
     atr = calculate_atr(high, low, close, 14)
     current_atr = robust_scalar(atr.iloc[-1])
     avg_atr = robust_scalar(atr.rolling(window=50).mean().iloc[-1])
@@ -169,10 +176,9 @@ class EntrySignalGenerator:
         self.df_hourly = None
         
     def fetch_data(self) -> bool:
-        """Fetch daily and hourly data"""
+        """Fetch daily data"""
         try:
             self.df_daily = yf.download(self.ticker, period="3mo", interval="1d", progress=False, auto_adjust=True)
-            self.df_hourly = yf.download(self.ticker, period="1mo", interval="1h", progress=False, auto_adjust=True)
             return not self.df_daily.empty and len(self.df_daily) > 50
         except:
             return False
@@ -180,13 +186,12 @@ class EntrySignalGenerator:
     def analyze(self, entry_price: float, direction: str = "LONG") -> Dict:
         """Generate complete entry analysis"""
         if not self.fetch_data():
-            return {"signal": EntrySignal.AVOID, "score": 0, "reasons": ["Data fetch failed"]}
+            return {"signal": EntrySignal.AVOID, "score": 0, "reasons": [], "warnings": ["Data fetch failed"]}
         
         close_daily = get_column(self.df_daily, 'Close')
-        close_hourly = get_column(self.df_hourly, 'Close')
         
         if close_daily is None:
-            return {"signal": EntrySignal.AVOID, "score": 0, "reasons": ["No price data"]}
+            return {"signal": EntrySignal.AVOID, "score": 0, "reasons": [], "warnings": ["No price data"]}
         
         current_price = robust_scalar(close_daily.iloc[-1])
         
@@ -206,14 +211,7 @@ class EntrySignalGenerator:
         hist_val = robust_scalar(hist.iloc[-1])
         hist_prev = robust_scalar(hist.iloc[-2])
         
-        # Bollinger Bands
-        upper, middle, lower = calculate_bollinger_bands(close_daily)
-        bb_upper = robust_scalar(upper.iloc[-1])
-        bb_lower = robust_scalar(lower.iloc[-1])
-        bb_middle = robust_scalar(middle.iloc[-1])
-        
         # RSI
-        from Strategy import calculate_rsi
         rsi = robust_scalar(calculate_rsi(close_daily, 14).iloc[-1])
         
         # Volume
@@ -236,11 +234,11 @@ class EntrySignalGenerator:
         # SCORING SYSTEM (0-100)
         # ======================================================================
         
-        score = 50  # Start neutral
+        score = 50
         reasons = []
         warnings = []
         
-        # Trend Alignment (25 points)
+        # Trend Alignment
         if direction == "LONG":
             if current_price > sma_20 > sma_50:
                 score += 15
@@ -258,7 +256,7 @@ class EntrySignalGenerator:
             else:
                 score -= 5
                 warnings.append("⚠️ 9 EMA below 21 EMA")
-        else:  # SHORT
+        else:
             if current_price < sma_20 < sma_50:
                 score += 15
                 reasons.append("✅ Price below 20 & 50 SMA (bearish alignment)")
@@ -273,7 +271,7 @@ class EntrySignalGenerator:
                 score -= 5
                 warnings.append("⚠️ 9 EMA above 21 EMA")
         
-        # MACD Signal (15 points)
+        # MACD Signal
         if direction == "LONG":
             if hist_val > 0 and hist_val > hist_prev:
                 score += 15
@@ -295,7 +293,7 @@ class EntrySignalGenerator:
                 score += 8
                 reasons.append("✅ MACD histogram negative")
         
-        # RSI (15 points)
+        # RSI
         if direction == "LONG":
             if 40 <= rsi <= 60:
                 score += 10
@@ -306,9 +304,6 @@ class EntrySignalGenerator:
             elif rsi > 70:
                 score -= 10
                 warnings.append(f"⚠️ RSI overbought at {rsi:.1f}")
-            elif rsi < 30:
-                score += 5
-                reasons.append(f"✅ RSI deeply oversold at {rsi:.1f}")
         else:
             if 40 <= rsi <= 60:
                 score += 10
@@ -319,7 +314,7 @@ class EntrySignalGenerator:
                 score -= 10
                 warnings.append(f"⚠️ RSI oversold at {rsi:.1f}")
         
-        # Volume Confirmation (10 points)
+        # Volume
         if volume_ratio > 1.5:
             score += 10
             reasons.append(f"✅ High relative volume ({volume_ratio:.1f}x)")
@@ -330,7 +325,7 @@ class EntrySignalGenerator:
             score -= 5
             warnings.append(f"⚠️ Low volume ({volume_ratio:.2f}x)")
         
-        # Distance from Support/Resistance (15 points)
+        # Distance from levels
         if direction == "LONG":
             if dist_from_support < 3:
                 score += 15
@@ -347,9 +342,8 @@ class EntrySignalGenerator:
                 reasons.append(f"✅ Near resistance ({dist_from_resistance:.1f}% away)")
             elif dist_from_resistance < 5:
                 score += 10
-                reasons.append(f"✅ Close to resistance ({dist_from_resistance:.1f}% away)")
         
-        # Trend Regime (20 points)
+        # Trend Regime
         if regime == TrendRegime.STRONG_TRENDING:
             score += 20
             reasons.append("✅ Strong trending market")
@@ -381,7 +375,7 @@ class EntrySignalGenerator:
             "reasons": reasons,
             "warnings": warnings,
             "current_price": current_price,
-            "regime": regime.value,
+            "regime": regime.value,  # ← FIXED: 'regime' key (matching UI)
             "rsi": rsi,
             "volume_ratio": volume_ratio,
             "sma_20": sma_20,
@@ -457,11 +451,11 @@ st.markdown("""
         font-size: 2.5rem;
         font-weight: 700;
     }
-    .signal-strong { background: #22c55e; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; }
-    .signal-buy { background: #10b981; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; }
-    .signal-neutral { background: #f59e0b; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; }
-    .signal-wait { background: #ef4444; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; }
-    .signal-avoid { background: #6b7280; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; }
+    .signal-strong { background: #22c55e; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; display: inline-block; }
+    .signal-buy { background: #10b981; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; display: inline-block; }
+    .signal-neutral { background: #f59e0b; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; display: inline-block; }
+    .signal-wait { background: #ef4444; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; display: inline-block; }
+    .signal-avoid { background: #6b7280; color: white; padding: 8px 16px; border-radius: 20px; font-weight: 700; display: inline-block; }
     .stButton > button {
         background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
         color: white;
@@ -548,7 +542,7 @@ with tab1:
             st.markdown(f"""
             <div style="text-align: center; padding: 20px;">
                 <div style="font-size: 1.2rem; color: #94a3b8;">ENTRY SIGNAL</div>
-                <div class="{signal_class}" style="font-size: 2rem; margin: 20px 0;">{signal.value}</div>
+                <div style="margin: 20px 0;"><span class="{signal_class}" style="font-size: 2rem;">{signal.value}</span></div>
                 <div style="font-size: 3rem; font-weight: 800;">{result['score']}</div>
                 <div style="color: #94a3b8;">Score / 100</div>
             </div>
@@ -576,6 +570,7 @@ with tab1:
                     }
                     st.session_state.journal.add_trade(new_trade)
                     st.success(f"✅ {ticker} added to active trades!")
+                    st.rerun()
         
         with col2:
             # Key Levels
@@ -604,11 +599,12 @@ with tab1:
                 st.metric("MACD Hist", f"{result['macd_histogram']:.3f}")
             
             # Reasons & Warnings
-            st.markdown("### ✅ Confirming Factors")
-            for reason in result['reasons']:
-                st.markdown(f"- {reason}")
+            if result.get('reasons'):
+                st.markdown("### ✅ Confirming Factors")
+                for reason in result['reasons']:
+                    st.markdown(f"- {reason}")
             
-            if result['warnings']:
+            if result.get('warnings'):
                 st.markdown("### ⚠️ Warning Signs")
                 for warning in result['warnings']:
                     st.markdown(f"- {warning}")
@@ -618,16 +614,12 @@ with tab1:
             
             if signal == EntrySignal.STRONG_BUY:
                 st.success("**Full Position Size** - Consider scaling in with 100% of planned position")
-                st.info("**Wider Stop** - Use 2x ATR stop to allow for normal volatility")
             elif signal == EntrySignal.BUY:
                 st.info("**Standard Position** - Use 75-100% of planned position")
-                st.info("**Standard Stop** - Use 1.5x ATR stop")
             elif signal == EntrySignal.NEUTRAL:
                 st.warning("**Reduced Size** - Consider 25-50% of planned position")
-                st.warning("**Tighter Stop** - Use 1x ATR stop, take profits quickly")
             elif signal == EntrySignal.WAIT:
                 st.error("**Paper Trade Only** - Track but do not commit capital")
-                st.error("**Wait for Confirmation** - Look for specific trigger (e.g., break above resistance)")
             else:
                 st.error("**Avoid This Setup** - Capital preservation is priority")
     
@@ -657,7 +649,6 @@ with tab2:
                 with col2:
                     current_price = st.number_input("Current Price", value=trade['entry_price'], step=0.01, key=f"price_{i}")
                     
-                    # Calculate current P&L
                     if trade['direction'] == "LONG":
                         pnl = (current_price - trade['entry_price']) * trade['position_size']
                         pnl_pct = (current_price - trade['entry_price']) / trade['entry_price'] * 100
@@ -685,7 +676,6 @@ with tab2:
                         st.success("Trade updated!")
                         st.rerun()
                 
-                # Trade notes
                 st.text_area("Notes", value=trade.get('notes', ''), key=f"notes_{i}")
     else:
         st.info("No active trades. Use the Entry Analysis tab to add trades to your journal.")
@@ -700,9 +690,7 @@ with tab3:
     journal = st.session_state.journal
     metrics = journal.calculate_portfolio_metrics()
     
-    # Key metrics
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         st.metric("Total Trades", metrics['total_trades'])
     with col2:
@@ -713,7 +701,6 @@ with tab3:
         st.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
     
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         st.metric("Wins", metrics['wins'])
     with col2:
@@ -725,28 +712,13 @@ with tab3:
     
     st.divider()
     
-    # Closed trades table
     closed_trades = journal.get_closed_trades()
-    
     if closed_trades:
         st.subheader("📋 Closed Trades")
-        
         df_closed = pd.DataFrame(closed_trades)
-        display_cols = ['ticker', 'direction', 'entry_price', 'entry_date', 'status', 'pnl', 'pnl_pct']
-        if all(col in df_closed.columns for col in display_cols):
-            display_df = df_closed[display_cols].copy()
-            display_df.columns = ['Ticker', 'Dir', 'Entry', 'Date', 'Status', 'P&L', 'P&L %']
-            
-            def color_pnl(val):
-                if isinstance(val, (int, float)):
-                    return 'color: #22c55e' if val >= 0 else 'color: #ef4444'
-                return ''
-            
-            styled = display_df.style.map(color_pnl, subset=['P&L', 'P&L %'])\
-                                    .format({'Entry': '${:.2f}', 'P&L': '${:.2f}', 'P&L %': '{:.2f}%'})
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(df_closed, use_container_width=True, hide_index=True)
     else:
-        st.info("No closed trades yet. Update trade status in the Active Trades tab.")
+        st.info("No closed trades yet.")
 
 # Footer
 st.divider()
