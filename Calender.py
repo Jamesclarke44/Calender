@@ -1,5 +1,5 @@
 """
-Strategy.py - Entry Signal Analysis Only
+Calender.py - Entry Signal Analysis Only
 SIMPLE VERSION - Just confirms entry signals
 Run with: streamlit run Strategy.py
 """
