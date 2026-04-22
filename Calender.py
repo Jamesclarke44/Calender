@@ -1,4 +1,18 @@
 """
+2_📈_Entry_Analyzer.py - Entry Signal Analyzer
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime
+from typing import Dict, Tuple
+
+# ... (keep all your existing Calender.py code) ...
+Calender
+
+"""
 Calender.py - Enhanced Entry Signal Analyzer
 Full technical analysis with scoring, regime detection, and recommendations
 """
@@ -729,3 +743,39 @@ else:
 # Footer
 st.divider()
 st.caption("📈 Entry Signal Analyzer — Comprehensive technical analysis for confident entries")
+# In the sidebar, use shared state:
+with st.sidebar:
+    st.header("📈 Configuration")
+    
+    # Use shared ticker from session state
+    ticker = st.text_input("Ticker Symbol", value=st.session_state.shared_ticker).upper()
+    direction = st.radio("Direction", ["LONG", "SHORT"], 
+                        index=0 if st.session_state.shared_direction == "LONG" else 1,
+                        horizontal=True)
+    entry_price = st.number_input("Entry Price ($)", 
+                                  value=st.session_state.shared_entry, 
+                                  step=0.01, format="%.2f")
+    
+    # Quick load button
+    if st.button("📥 Load from Scanner", use_container_width=True):
+        st.success(f"Loaded {st.session_state.shared_ticker}")
+    
+    # ... rest of sidebar ...
+
+# After analysis, update shared state:
+if st.session_state.analysis_result and "error" not in st.session_state.analysis_result:
+    result = st.session_state.analysis_result
+    
+    # Update shared state
+    st.session_state.shared_ticker = ticker
+    st.session_state.shared_entry = entry_price
+    st.session_state.shared_direction = direction
+    st.session_state.shared_score = result['score']
+    st.session_state.shared_support = result['support']
+    st.session_state.shared_resistance = result['resistance']
+    st.session_state.shared_atr = result['atr']
+    st.session_state.shared_stop = result['suggested_stop']
+    
+    # Button to go to exit planner
+    if st.button("🎯 Go to Exit Planner", use_container_width=True, type="primary"):
+        st.switch_page("pages/3_🎯_Exit_Planner.py")
