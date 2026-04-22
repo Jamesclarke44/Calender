@@ -1,6 +1,6 @@
 """
 Strategy.py - Entry Signals & Trade Management
-FULLY WORKING PRODUCTION VERSION
+PRODUCTION VERSION - Real scoring, working trade journal
 Run with: streamlit run Strategy.py
 """
 
@@ -147,7 +147,7 @@ def detect_trend_regime(df: pd.DataFrame) -> TrendRegime:
         return TrendRegime.CHOPPY
 
 # ============================================================================
-# ENTRY SIGNAL GENERATOR
+# ENTRY SIGNAL GENERATOR - REAL SCORING RESTORED
 # ============================================================================
 
 class EntrySignalGenerator:
@@ -215,11 +215,11 @@ class EntrySignalGenerator:
         dist_from_support = (current_price - recent_low) / current_price * 100
         dist_from_resistance = (recent_high - current_price) / current_price * 100
         
+        # REAL SCORING - NOT FORCED
         score = 50
         reasons = []
         warnings = []
         
-        # Scoring logic
         if direction == "LONG":
             if current_price > sma_20 > sma_50:
                 score += 15
@@ -271,7 +271,6 @@ class EntrySignalGenerator:
                 score -= 5
                 warnings.append(f"⚠️ Far from support ({dist_from_support:.1f}% away)")
         else:
-            # SHORT logic
             if current_price < sma_20 < sma_50:
                 score += 15
                 reasons.append("✅ Price below 20 & 50 SMA")
@@ -318,6 +317,7 @@ class EntrySignalGenerator:
         
         score = max(0, min(100, score))
         
+        # REAL SIGNAL - NOT FORCED
         if score >= 75:
             signal_enum = EntrySignal.STRONG_BUY
         elif score >= 60:
@@ -366,13 +366,6 @@ st.markdown("""
         padding: 12px 24px;
         font-weight: 600;
     }
-    .trade-card {
-        background: #1e2a3a;
-        border-radius: 12px;
-        padding: 16px;
-        margin: 10px 0;
-        border: 1px solid #334155;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -409,12 +402,9 @@ with st.sidebar:
     
     st.divider()
     
-    # Quick stats
-    active_count = len([t for t in st.session_state.trades if "Active" in str(t.get('status', ''))])
-    total_count = len(st.session_state.trades)
-    
+    active_count = len([t for t in st.session_state.trades if t.get('status') == 'Active'])
     st.metric("Active Trades", active_count)
-    st.metric("Total Trades", total_count)
+    st.metric("Total Trades", len(st.session_state.trades))
     
     st.divider()
     analyze_button = st.button("🔍 Analyze Entry", type="primary", use_container_width=True)
@@ -425,6 +415,12 @@ with st.sidebar:
 
 st.markdown('<h1 class="strategy-header">📈 Entry Strategy Manager</h1>', unsafe_allow_html=True)
 st.caption("Confirm entry signals and manage active trades")
+
+# Helpful debug expander (can be hidden)
+with st.expander("🔍 Debug Info", expanded=False):
+    st.write(f"Trades in session: {len(st.session_state.trades)}")
+    for i, t in enumerate(st.session_state.trades):
+        st.write(f"{i}: {t.get('ticker')} - {t.get('direction')} - Status: '{t.get('status')}'")
 
 tab1, tab2, tab3 = st.tabs(["🔍 Entry Analysis", "📊 Active Trades", "📈 Performance"])
 
@@ -471,7 +467,7 @@ with tab1:
             
             # Add to trade journal button
             if signal in [EntrySignal.STRONG_BUY, EntrySignal.BUY]:
-                if st.button("📝 Add to Trade Journal", use_container_width=True, type="primary"):
+                if st.button("📝 ADD TO TRADE JOURNAL", use_container_width=True, type="primary"):
                     new_trade = {
                         "ticker": ticker,
                         "direction": direction,
@@ -486,7 +482,7 @@ with tab1:
                         "notes": ""
                     }
                     st.session_state.trades.append(new_trade)
-                    st.success(f"✅ {ticker} added to active trades!")
+                    st.success(f"✅ {ticker} added! Total trades: {len(st.session_state.trades)}")
                     st.rerun()
         
         with col2:
@@ -514,18 +510,6 @@ with tab1:
                 st.markdown("### ⚠️ Warning Signs")
                 for w in result['warnings']:
                     st.markdown(f"- {w}")
-            
-            st.markdown("### 🎯 Trade Management")
-            if signal == EntrySignal.STRONG_BUY:
-                st.success("**Full Position** - 100% size, 2x ATR stop")
-            elif signal == EntrySignal.BUY:
-                st.info("**Standard Position** - 75-100% size")
-            elif signal == EntrySignal.NEUTRAL:
-                st.warning("**Reduced Size** - 25-50% size")
-            elif signal == EntrySignal.WAIT:
-                st.error("**Paper Trade Only**")
-            else:
-                st.error("**Avoid**")
     else:
         st.info("👈 Enter a ticker and click 'Analyze Entry' to begin")
 
@@ -534,30 +518,32 @@ with tab1:
 # ============================================================================
 
 with tab2:
-    st.subheader("📊 Active Trade Management")
+    st.subheader("📊 Active Trades")
     
-    active_trades = [t for t in st.session_state.trades if "Active" in str(t.get('status', ''))]
+    active_trades = [t for t in st.session_state.trades if t.get('status') == 'Active']
     
     if active_trades:
-        st.markdown(f"**{len(active_trades)} active trades**")
+        st.success(f"**{len(active_trades)} active trades**")
         
         for i, trade in enumerate(active_trades):
-            # Find original index
-            original_idx = next((idx for idx, t in enumerate(st.session_state.trades) 
-                               if t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date']), i)
-            
-            with st.expander(f"{trade['ticker']} - {trade['direction']} @ ${trade['entry_price']:.2f} (Score: {trade.get('entry_score', 'N/A')})"):
-                c1, c2 = st.columns(2)
+            with st.expander(f"📈 {trade['ticker']} - {trade['direction']} @ ${trade['entry_price']:.2f} (Score: {trade.get('entry_score', 'N/A')})"):
+                col1, col2 = st.columns(2)
                 
-                with c1:
+                with col1:
                     st.markdown(f"**Entry Date:** {trade.get('entry_date', 'N/A')}")
                     st.markdown(f"**Status:** {trade.get('status', 'Active')}")
                     st.markdown(f"**Position:** {trade.get('position_size', 100)} shares")
                     st.markdown(f"**Stop Loss:** ${trade.get('stop_loss', 0):.2f}")
                     st.markdown(f"**Take Profit:** ${trade.get('take_profit', 0):.2f}")
                 
-                with c2:
-                    current = st.number_input("Current Price", value=trade['entry_price'], step=0.01, key=f"px_{original_idx}")
+                with col2:
+                    current = st.number_input(
+                        "Current Price", 
+                        value=float(trade['entry_price']), 
+                        step=0.01, 
+                        format="%.2f",
+                        key=f"price_{trade['ticker']}_{i}"
+                    )
                     
                     if trade['direction'] == "LONG":
                         pnl = (current - trade['entry_price']) * trade.get('position_size', 100)
@@ -567,49 +553,73 @@ with tab2:
                         pnl_pct = (trade['entry_price'] - current) / trade['entry_price'] * 100
                     
                     color = "#22c55e" if pnl >= 0 else "#ef4444"
-                    st.markdown(f"**Current P&L:** <span style='color:{color}'>${pnl:.2f} ({pnl_pct:+.2f}%)</span>", unsafe_allow_html=True)
-                    
-                    status_options = ["Active", "Partial Exit", "Closed (Win)", "Closed (Loss)", "Closed (Breakeven)"]
-                    current_status = trade.get('status', 'Active')
-                    status_idx = status_options.index(current_status) if current_status in status_options else 0
-                    
-                    new_status = st.selectbox("Update Status", status_options, index=status_idx, key=f"st_{original_idx}")
-                    
-                    if st.button("Update Trade", key=f"upd_{original_idx}"):
-                        st.session_state.trades[original_idx]['status'] = new_status
-                        st.session_state.trades[original_idx]['pnl'] = pnl
-                        st.session_state.trades[original_idx]['pnl_pct'] = pnl_pct
-                        st.success("Trade updated!")
+                    st.markdown(f"**Current P&L:** <span style='color:{color}; font-weight:700;'>${pnl:.2f} ({pnl_pct:+.2f}%)</span>", unsafe_allow_html=True)
+                
+                st.divider()
+                
+                status_options = ["Active", "Partial Exit", "Closed (Win)", "Closed (Loss)", "Closed (Breakeven)"]
+                current_status = trade.get('status', 'Active')
+                status_idx = status_options.index(current_status) if current_status in status_options else 0
+                
+                new_status = st.selectbox("Update Status", status_options, index=status_idx, key=f"status_{trade['ticker']}_{i}")
+                
+                notes = st.text_area("Notes", value=trade.get('notes', ''), key=f"notes_{trade['ticker']}_{i}", placeholder="Add observations...")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("💾 Update", key=f"update_{trade['ticker']}_{i}", use_container_width=True):
+                        for t in st.session_state.trades:
+                            if t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date']:
+                                t['status'] = new_status
+                                t['pnl'] = pnl
+                                t['pnl_pct'] = pnl_pct
+                                t['notes'] = notes
+                                break
+                        st.success("✅ Updated!")
                         st.rerun()
                 
-                # Notes
-                notes = st.text_area("Notes", value=trade.get('notes', ''), key=f"notes_{original_idx}")
-                if st.button("Save Notes", key=f"save_notes_{original_idx}"):
-                    st.session_state.trades[original_idx]['notes'] = notes
-                    st.success("Notes saved!")
-                    st.rerun()
+                with col2:
+                    if st.button("🗑️ Delete", key=f"delete_{trade['ticker']}_{i}", use_container_width=True):
+                        st.session_state.trades = [
+                            t for t in st.session_state.trades 
+                            if not (t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date'])
+                        ]
+                        st.success("🗑️ Deleted!")
+                        st.rerun()
                 
-                # Delete button
-                if st.button("🗑️ Delete Trade", key=f"del_{original_idx}"):
-                    del st.session_state.trades[original_idx]
-                    st.success("Trade deleted!")
-                    st.rerun()
+                with col3:
+                    if current > trade['entry_price'] and trade['direction'] == "LONG":
+                        if st.button("💰 Take Profit", key=f"profit_{trade['ticker']}_{i}", use_container_width=True):
+                            for t in st.session_state.trades:
+                                if t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date']:
+                                    t['status'] = "Closed (Win)"
+                                    t['pnl'] = pnl
+                                    break
+                            st.success("🎉 Closed as WIN!")
+                            st.rerun()
     else:
-        st.info("No active trades. Go to the Entry Analysis tab, analyze a ticker, and click 'Add to Trade Journal'.")
+        st.info("📭 No active trades. Add one from the Entry Analysis tab.")
+        
+        if len(st.session_state.trades) > 0:
+            st.markdown("---")
+            st.markdown(f"**All trades ({len(st.session_state.trades)}):**")
+            for t in st.session_state.trades:
+                st.write(f"- {t.get('ticker')}: {t.get('status')}")
 
 # ============================================================================
 # TAB 3: PERFORMANCE
 # ============================================================================
 
 with tab3:
-    st.subheader("📈 Trading Performance")
+    st.subheader("📈 Performance")
     
-    closed_trades = [t for t in st.session_state.trades if "Closed" in str(t.get('status', ''))]
+    closed_trades = [t for t in st.session_state.trades if 'Closed' in str(t.get('status', ''))]
     
-    if closed_trades or len(st.session_state.trades) > 0:
+    if closed_trades:
         total_trades = len(closed_trades)
-        wins = len([t for t in closed_trades if "Win" in str(t.get('status', ''))])
-        losses = len([t for t in closed_trades if "Loss" in str(t.get('status', ''))])
+        wins = len([t for t in closed_trades if 'Win' in str(t.get('status', ''))])
+        losses = len([t for t in closed_trades if 'Loss' in str(t.get('status', ''))])
         win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
         
         total_pnl = sum([t.get('pnl', 0) for t in closed_trades])
@@ -630,30 +640,27 @@ with tab3:
         c4.metric("Avg Loss", f"${avg_loss:.2f}")
         
         st.divider()
-        
-        if closed_trades:
-            st.subheader("📋 Closed Trades")
-            df_closed = pd.DataFrame(closed_trades)
-            display_cols = ['ticker', 'direction', 'entry_price', 'entry_date', 'status', 'pnl']
-            available = [c for c in display_cols if c in df_closed.columns]
-            st.dataframe(df_closed[available], use_container_width=True, hide_index=True)
-        
-        # Export
-        if st.button("📥 Export Trade Journal (JSON)"):
+        st.subheader("📋 Closed Trades")
+        df_closed = pd.DataFrame(closed_trades)
+        display_cols = ['ticker', 'direction', 'entry_price', 'entry_date', 'status', 'pnl']
+        available = [c for c in display_cols if c in df_closed.columns]
+        st.dataframe(df_closed[available], use_container_width=True, hide_index=True)
+    
+    if len(st.session_state.trades) > 0:
+        st.divider()
+        if st.button("📥 Export Trade Journal"):
             st.download_button(
-                "Download Journal",
+                "Download JSON",
                 json.dumps(st.session_state.trades, indent=2, default=str),
-                file_name=f"trade_journal_{datetime.now().strftime('%Y%m%d')}.json",
+                file_name=f"trades_{datetime.now().strftime('%Y%m%d')}.json",
                 mime="application/json"
             )
         
-        # Clear all
-        if st.button("🗑️ Clear All Trades", type="secondary"):
+        if st.button("🗑️ Clear All Trades"):
             st.session_state.trades = []
-            st.success("All trades cleared!")
             st.rerun()
     else:
-        st.info("No trades in journal yet.")
+        st.info("No trades yet. Add trades from the Entry Analysis tab.")
 
 # Footer
 st.divider()
