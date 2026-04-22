@@ -516,96 +516,58 @@ with tab1:
 # ============================================================================
 # TAB 2: ACTIVE TRADES
 # ============================================================================
+# ============================================================================
+# TAB 2: ACTIVE TRADES - ULTRA SIMPLE DEBUG
+# ============================================================================
 
 with tab2:
     st.subheader("📊 Active Trades")
     
-    active_trades = [t for t in st.session_state.trades if t.get('status') == 'Active']
+    # SHOW EVERYTHING in session state
+    st.write("### 🔍 Raw Session State Data:")
+    st.write(f"Total trades in session: **{len(st.session_state.trades)}**")
+    
+    if len(st.session_state.trades) > 0:
+        for i, t in enumerate(st.session_state.trades):
+            st.write(f"--- Trade {i} ---")
+            st.write(f"Ticker: {t.get('ticker')}")
+            st.write(f"Status: **'{t.get('status')}'** (type: {type(t.get('status'))})")
+            st.write(f"Full trade: {t}")
+    
+    # Try different filter methods
+    st.write("### 📋 Filtering Attempts:")
+    
+    # Method 1: Exact match
+    method1 = [t for t in st.session_state.trades if t.get('status') == 'Active']
+    st.write(f"Method 1 (== 'Active'): **{len(method1)}** trades")
+    
+    # Method 2: String contains
+    method2 = [t for t in st.session_state.trades if 'Active' in str(t.get('status', ''))]
+    st.write(f"Method 2 ('Active' in string): **{len(method2)}** trades")
+    
+    # Method 3: Lowercase
+    method3 = [t for t in st.session_state.trades if str(t.get('status', '')).lower() == 'active']
+    st.write(f"Method 3 (lowercase match): **{len(method3)}** trades")
+    
+    # Method 4: No filter - show all
+    st.write(f"Method 4 (no filter): **{len(st.session_state.trades)}** trades")
+    
+    st.divider()
+    
+    # Use the method that worked
+    active_trades = method2  # This usually works best
     
     if active_trades:
-        st.success(f"**{len(active_trades)} active trades**")
+        st.success(f"✅ Found {len(active_trades)} active trades!")
         
-        for i, trade in enumerate(active_trades):
-            with st.expander(f"📈 {trade['ticker']} - {trade['direction']} @ ${trade['entry_price']:.2f} (Score: {trade.get('entry_score', 'N/A')})"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown(f"**Entry Date:** {trade.get('entry_date', 'N/A')}")
-                    st.markdown(f"**Status:** {trade.get('status', 'Active')}")
-                    st.markdown(f"**Position:** {trade.get('position_size', 100)} shares")
-                    st.markdown(f"**Stop Loss:** ${trade.get('stop_loss', 0):.2f}")
-                    st.markdown(f"**Take Profit:** ${trade.get('take_profit', 0):.2f}")
-                
-                with col2:
-                    current = st.number_input(
-                        "Current Price", 
-                        value=float(trade['entry_price']), 
-                        step=0.01, 
-                        format="%.2f",
-                        key=f"price_{trade['ticker']}_{i}"
-                    )
-                    
-                    if trade['direction'] == "LONG":
-                        pnl = (current - trade['entry_price']) * trade.get('position_size', 100)
-                        pnl_pct = (current - trade['entry_price']) / trade['entry_price'] * 100
-                    else:
-                        pnl = (trade['entry_price'] - current) * trade.get('position_size', 100)
-                        pnl_pct = (trade['entry_price'] - current) / trade['entry_price'] * 100
-                    
-                    color = "#22c55e" if pnl >= 0 else "#ef4444"
-                    st.markdown(f"**Current P&L:** <span style='color:{color}; font-weight:700;'>${pnl:.2f} ({pnl_pct:+.2f}%)</span>", unsafe_allow_html=True)
-                
-                st.divider()
-                
-                status_options = ["Active", "Partial Exit", "Closed (Win)", "Closed (Loss)", "Closed (Breakeven)"]
-                current_status = trade.get('status', 'Active')
-                status_idx = status_options.index(current_status) if current_status in status_options else 0
-                
-                new_status = st.selectbox("Update Status", status_options, index=status_idx, key=f"status_{trade['ticker']}_{i}")
-                
-                notes = st.text_area("Notes", value=trade.get('notes', ''), key=f"notes_{trade['ticker']}_{i}", placeholder="Add observations...")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if st.button("💾 Update", key=f"update_{trade['ticker']}_{i}", use_container_width=True):
-                        for t in st.session_state.trades:
-                            if t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date']:
-                                t['status'] = new_status
-                                t['pnl'] = pnl
-                                t['pnl_pct'] = pnl_pct
-                                t['notes'] = notes
-                                break
-                        st.success("✅ Updated!")
-                        st.rerun()
-                
-                with col2:
-                    if st.button("🗑️ Delete", key=f"delete_{trade['ticker']}_{i}", use_container_width=True):
-                        st.session_state.trades = [
-                            t for t in st.session_state.trades 
-                            if not (t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date'])
-                        ]
-                        st.success("🗑️ Deleted!")
-                        st.rerun()
-                
-                with col3:
-                    if current > trade['entry_price'] and trade['direction'] == "LONG":
-                        if st.button("💰 Take Profit", key=f"profit_{trade['ticker']}_{i}", use_container_width=True):
-                            for t in st.session_state.trades:
-                                if t.get('ticker') == trade['ticker'] and t.get('entry_date') == trade['entry_date']:
-                                    t['status'] = "Closed (Win)"
-                                    t['pnl'] = pnl
-                                    break
-                            st.success("🎉 Closed as WIN!")
-                            st.rerun()
+        for trade in active_trades:
+            st.write(f"📈 **{trade.get('ticker')}** - {trade.get('direction')} @ ${trade.get('entry_price', 0):.2f}")
+            st.write(f"   Status: {trade.get('status')}")
+            st.write(f"   Entry Date: {trade.get('entry_date')}")
+            st.divider()
     else:
-        st.info("📭 No active trades. Add one from the Entry Analysis tab.")
-        
-        if len(st.session_state.trades) > 0:
-            st.markdown("---")
-            st.markdown(f"**All trades ({len(st.session_state.trades)}):**")
-            for t in st.session_state.trades:
-                st.write(f"- {t.get('ticker')}: {t.get('status')}")
+        st.warning("No active trades found with any filter method.")
+        st.info("Try adding a trade from the Entry Analysis tab.")
 
 # ============================================================================
 # TAB 3: PERFORMANCE
